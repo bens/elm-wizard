@@ -1,13 +1,16 @@
-module Wizard exposing (WizardMsg, Msg(..), Model, Wizard, Step, ViewModel, wizard, defaultView)
+module Wizard exposing
+  ( StepMsg(..), ServerMsg(..), WizardMsg, Model, Check(..), Wizard, Step, ViewModel
+  , wizard, defaultView
+  )
 
 {-| A wizard module.
 
-@docs Msg, WizardMsg, Model
+@docs ServerMsg, StepMsg, WizardMsg, Check, Model
 
 # The Wizard
 @docs Wizard, Step, wizard
 
-# View Rendering
+# Views
 @docs ViewModel, defaultView
 
 -}
@@ -21,47 +24,68 @@ import Maybe.Extra as Maybe
 import Task
 
 
-{-| A wizard message.
+{-| Messages delivered to the steps.
 -}
-type WizardMsg msg
+type StepMsg err msg
+  = Msg msg
+  | InvalidModel (List err)
+
+
+{-| Private wizard messages.
+-}
+type WizardMsg err msg
   = Forward
   | Back
-  | StepMsg msg
+  | StepMsg (StepMsg err msg)
 
 
-{-| Possibly a message for the parent
+{-| Messages returned to the component embedding the Wizard.
 -}
-type Msg msg model
-  = WizardMsg (WizardMsg msg)
+type ServerMsg err msg model
+  = WizardMsg (WizardMsg err msg)
   | Completed model
   | Cancelled
 
 
-{-| A step of a wizard.
+{-| Result of model validation.
 -}
-type alias Step msg model
-  = { update : msg -> model -> (model, Cmd msg)
-    , view : model -> Html msg
-    }
+type Check err
+  = Ok
+  | Failed (List err)
 
 
 {-| A wizard model.
 -}
-type Model msg model
+type Model err msg model
   = Model
     { model : model
-    , step : Step msg model
-    , left : List (Step msg model)
-    , right : List (Step msg model)
+    , step : Step err msg model
+    , left : List (Step err msg model)
+    , right : List (Step err msg model)
     }
 
 
-{-| A wizard.
+{-| A wizard.  `update` can generate `ServerMsg` messages which pass information
+about completion or cancellation of the wizard up to the embedding component.
+`WizardMsg` messages should be forwarded back to the `update` function as usual.
 -}
-type alias Wizard msg model
-  = { init : Model msg model
-    , update : WizardMsg msg -> Model msg model -> (Model msg model, Cmd (Msg msg model))
-    , view : Model msg model -> Html (WizardMsg msg)
+type alias Wizard err msg model
+  = { init : Model err msg model
+    , update : WizardMsg err msg
+             -> Model err msg model
+             -> (Model err msg model, Cmd (ServerMsg err msg model))
+    , view : Model err msg model -> Html (WizardMsg err msg)
+    }
+
+
+{-| A step of a wizard.  A step's `update` function can receive `StepMsg`
+messages that indicate that a check of the model failed or succeeded, as well as
+its own messages.
+-}
+type alias Step err msg model
+  = { update : StepMsg err msg -> model -> (model, Cmd msg)
+    , view : model -> Html msg
+    , check : model -> Check err
     }
 
 
@@ -76,11 +100,11 @@ type alias ViewModel model
 
 {-| Build a wizard value.
 -}
-wizard : (ViewModel model -> Html msg -> Html (WizardMsg msg))
-       -> Step msg model
-       -> List (Step msg model)
+wizard : (ViewModel model -> Html msg -> Html (WizardMsg err msg))
+       -> Step err msg model
+       -> List (Step err msg model)
        -> model
-       -> Wizard msg model
+       -> Wizard err msg model
 wizard render step steps init =
   let model =
         Model
@@ -89,8 +113,7 @@ wizard render step steps init =
           , left = []
           , right = steps
           }
-  in
-  { init = model, update = update, view = view render }
+  in { init = model, update = update, view = view render }
 
 
 command : a -> Cmd a
@@ -98,30 +121,35 @@ command x =
   Task.perform identity identity (Task.succeed x)
 
 
-update : WizardMsg msg
-       -> Model msg model
-       -> (Model msg model, Cmd (Msg msg model))
+update : WizardMsg err msg
+       -> Model err msg model
+       -> (Model err msg model, Cmd (ServerMsg err msg model))
 update msg (Model model) =
   case msg of
     Forward ->
-      Maybe.mapDefault
-        (Model model, command (Completed model.model))
-        (\m -> (m, Cmd.none))
-        (forward (Model model))
+      case model.step.check model.model of
+        Ok ->
+          Maybe.mapDefault
+            (Model model, command (Completed model.model))
+            (\m -> (m, Cmd.none))
+            (forward (Model model))
+        Failed errs ->
+          (Model model, command (WizardMsg (StepMsg (InvalidModel errs))))
     Back ->
-      Maybe.mapDefault
-        (Model model, command Cancelled)
-        (\m -> (m, Cmd.none))
-        (back (Model model))
+      case back (Model model) of
+        Nothing ->
+          (Model model, command Cancelled)
+        Just m ->
+          (m, Cmd.none)
     StepMsg m ->
       case model.step.update m model.model of
         (model', cmd) ->
-          (Model { model | model = model' }, Cmd.map (StepMsg >> WizardMsg) cmd)
+          (Model { model | model = model' }, Cmd.map (Msg >> StepMsg >> WizardMsg) cmd)
 
 
-view : (ViewModel model -> Html msg -> Html (WizardMsg msg))
-     -> Model msg model
-     -> Html (WizardMsg msg)
+view : (ViewModel model -> Html msg -> Html (WizardMsg err msg))
+     -> Model err msg model
+     -> Html (WizardMsg err msg)
 view render (Model m) =
   let m' = { model = m.model
            , numSteps = List.length m.left + List.length m.right + 1
@@ -132,17 +160,17 @@ view render (Model m) =
 
 {-| The default way to render a wizard.
 -}
-defaultView : Bool -> ViewModel model -> Html msg -> Html (WizardMsg msg)
+defaultView : Bool -> ViewModel model -> Html msg -> Html (WizardMsg err msg)
 defaultView showDebug m body =
   let empty = Html.text "○"
       full = Html.text "●"
       html =
         [ Html.p [ Attr.class "wizard-step"
-                 , Attr.style [("width", "8em"), ("height", "5em")]
+                 , Attr.style [("width", "15em"), ("height", "5em")]
                  , border
                  , spacing 1
                  ]
-            [App.map StepMsg body]
+            [App.map (Msg >> StepMsg) body]
         , Html.span [ spacing 0.5 ]
             [ Html.button [spacing 0.2, onClick Back]
                 [Html.text (if m.currentStep == 0 then "Cancel" else "Back ⇐")]
@@ -192,7 +220,7 @@ border =
 --
 
 
-forward : Model msg model -> Maybe (Model msg model)
+forward : Model err msg model -> Maybe (Model err msg model)
 forward (Model m) =
   List.uncons m.right |>
     Maybe.mapDefault
@@ -200,7 +228,7 @@ forward (Model m) =
       (\(r, rs) -> Just (Model { m | step = r, left = m.step :: m.left, right = rs }))
 
 
-back : Model msg model -> Maybe (Model msg model)
+back : Model err msg model -> Maybe (Model err msg model)
 back (Model m) =
   List.uncons m.left |>
     Maybe.mapDefault
