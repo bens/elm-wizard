@@ -4,9 +4,12 @@
   "repository": "https://github.com/bens/elm-wizard.git",
   "license": "BSD3",
   "source-directories": [
-    "src"
+    "src",
+    "examples"
   ],
-  "exposed-modules": ["Wizard"],
+  "exposed-modules": [
+    "Wizard"
+  ],
   "dependencies": {
     "elm-lang/core":       "4.0.0 <= v < 5.0.0",
     "elm-lang/html":       "1.0.0 <= v < 2.0.0",
