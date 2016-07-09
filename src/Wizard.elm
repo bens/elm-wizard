@@ -134,7 +134,9 @@ view render (Model m) =
 -}
 defaultView : Bool -> ViewModel model -> Html msg -> Html (WizardMsg msg)
 defaultView showDebug m body =
-  let html =
+  let empty = Html.text "○"
+      full = Html.text "●"
+      html =
         [ Html.p [ Attr.class "wizard-step"
                  , Attr.style [("width", "8em"), ("height", "5em")]
                  , border
@@ -142,15 +144,17 @@ defaultView showDebug m body =
                  ]
             [App.map StepMsg body]
         , Html.span [ spacing 0.5 ]
-            [ Html.button [spacing 0.2, onClick Back] [Html.text "Back ⇐"]
+            [ Html.button [spacing 0.2, onClick Back]
+                [Html.text (if m.currentStep == 0 then "Cancel" else "Back ⇐")]
+
             , Html.span [spacing 0.2]
-                (List.repeat m.currentStep (Html.text "○") ++
-                   [Html.text "●"] ++
-                   List.repeat (m.numSteps - m.currentStep - 1) (Html.text "○"))
+                (List.repeat m.currentStep empty ++
+                   [full] ++
+                   List.repeat (m.numSteps - m.currentStep - 1) empty)
             , Html.button [ spacing 0.2
                           , onClick Forward
                           ]
-                [Html.text "⇒ Next"]
+                [Html.text (if m.currentStep == m.numSteps - 1 then "Finish" else "⇒ Next")]
             ]
         ]
       debug =
@@ -184,7 +188,7 @@ border =
 
 
 --
--- UTILITIES
+-- ZIPPERS
 --
 
 
@@ -202,13 +206,3 @@ back (Model m) =
     Maybe.mapDefault
       Nothing
       (\(l, ls) -> Just (Model { m | step = l, left = ls, right = m.step :: m.right }))
-
-
-start : Model msg model -> Model msg model
-start model =
-  Maybe.mapDefault model start (back model)
-
-
-end : Model msg model -> Model msg model
-end model =
-  Maybe.mapDefault model end (forward model)

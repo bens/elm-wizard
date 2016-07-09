@@ -1,4 +1,4 @@
-module SampleWizard exposing (Msg, ReturnMsg, Model, init, update, view)
+module SampleWizard exposing (Msg, ReturnMsg, Model, WizardModel, init, restart, update, view)
 
 import Html exposing (Html)
 import Html.Attributes as Attr
@@ -8,15 +8,15 @@ import Wizard as W exposing (Step, Wizard)
 
 
 type alias Msg =
-  W.WizardMsg SMsg SModel
+  W.WizardMsg SMsg Model
 
 
 type alias ReturnMsg =
-  W.Msg SMsg SModel
+  W.Msg SMsg Model
 
 
-type alias Model =
-  W.Model SMsg SModel
+type alias WizardModel =
+  W.Model SMsg Model
 
 
 type SMsg
@@ -24,15 +24,25 @@ type SMsg
   | Incr
 
 
-type alias SModel
+type alias Model
   = (String, Int)
 
 
+wizard : Model -> Wizard SMsg Model
+wizard =
+  W.wizard (W.defaultView True) stepA [stepB]
+
+
 { init, update, view } =
-  W.wizard (W.defaultView True) stepA [stepB, stepA] ("", 0)
+  wizard ("", 0)
 
 
-stepA : Step SMsg SModel
+restart : Model -> WizardModel
+restart m =
+  (wizard m).init
+
+
+stepA : Step SMsg Model
 stepA =
   let update msg (name, x) =
         case msg of
@@ -53,7 +63,7 @@ stepA =
   in { update = update, view = view }
 
 
-stepB : Step SMsg SModel
+stepB : Step SMsg Model
 stepB =
   let update msg (name, x) =
         case msg of
