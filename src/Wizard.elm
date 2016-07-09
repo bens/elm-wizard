@@ -1,8 +1,8 @@
-module Wizard exposing (Msg, Model, Wizard, Step, ViewModel, wizard, defaultView)
+module Wizard exposing (WizardMsg, Msg(..), Model, Wizard, Step, ViewModel, wizard, defaultView)
 
 {-| A wizard module.
 
-@docs Msg, Model
+@docs Msg, WizardMsg, Model
 
 # The Wizard
 @docs Wizard, Step, wizard
@@ -18,14 +18,23 @@ import Html.Attributes as Attr
 import Html.Events exposing (onClick)
 import List.Extra as List
 import Maybe.Extra as Maybe
+import Task
 
 
 {-| A wizard message.
 -}
-type Msg msg
+type WizardMsg msg
   = Forward
   | Back
-  | Msg msg
+  | StepMsg msg
+
+
+{-| Possibly a message for the parent
+-}
+type Msg msg model
+  = WizardMsg (WizardMsg msg)
+  | Completed model
+  | Cancelled
 
 
 {-| A step of a wizard.
@@ -41,7 +50,6 @@ type alias Step msg model
 type Model msg model
   = Model
     { model : model
-    , scratch : model
     , step : Step msg model
     , left : List (Step msg model)
     , right : List (Step msg model)
@@ -52,8 +60,8 @@ type Model msg model
 -}
 type alias Wizard msg model
   = { init : Model msg model
-    , update : Msg msg -> Model msg model -> (Model msg model, Cmd (Msg msg))
-    , view : Model msg model -> Html (Msg msg)
+    , update : WizardMsg msg -> Model msg model -> (Model msg model, Cmd (Msg msg model))
+    , view : Model msg model -> Html (WizardMsg msg)
     }
 
 
@@ -68,7 +76,7 @@ type alias ViewModel model
 
 {-| Build a wizard value.
 -}
-wizard : (ViewModel model -> Html msg -> Html (Msg msg))
+wizard : (ViewModel model -> Html msg -> Html (WizardMsg msg))
        -> Step msg model
        -> List (Step msg model)
        -> model
@@ -77,7 +85,6 @@ wizard render step steps init =
   let model =
         Model
           { model = init
-          , scratch = init
           , step = step
           , left = []
           , right = steps
@@ -86,43 +93,46 @@ wizard render step steps init =
   { init = model, update = update, view = view render }
 
 
-update : Msg msg
+command : a -> Cmd a
+command x =
+  Task.perform identity identity (Task.succeed x)
+
+
+update : WizardMsg msg
        -> Model msg model
-       -> (Model msg model, Cmd (Msg msg))
+       -> (Model msg model, Cmd (Msg msg model))
 update msg (Model model) =
   case msg of
     Forward ->
-      case forward (Model model) of
-        Nothing ->
-          (start (Model { model | model = model.scratch }), Cmd.none)
-        Just model' ->
-          (model', Cmd.none)
+      Maybe.mapDefault
+        (Model model, command (Completed model.model))
+        (\m -> (m, Cmd.none))
+        (forward (Model model))
     Back ->
-      case back (Model model) of
-        Nothing ->
-          (Model { model | scratch = model.model }, Cmd.none)
-        Just model' ->
-          (model', Cmd.none)
-    Msg m ->
-      case model.step.update m model.scratch of
+      Maybe.mapDefault
+        (Model model, command Cancelled)
+        (\m -> (m, Cmd.none))
+        (back (Model model))
+    StepMsg m ->
+      case model.step.update m model.model of
         (model', cmd) ->
-          (Model { model | scratch = model' }, Cmd.map Msg cmd)
+          (Model { model | model = model' }, Cmd.map (StepMsg >> WizardMsg) cmd)
 
 
-view : (ViewModel model -> Html msg -> Html (Msg msg))
+view : (ViewModel model -> Html msg -> Html (WizardMsg msg))
      -> Model msg model
-     -> Html (Msg msg)
+     -> Html (WizardMsg msg)
 view render (Model m) =
-  let m' = { model = m.scratch
+  let m' = { model = m.model
            , numSteps = List.length m.left + List.length m.right + 1
            , currentStep = List.length m.left
            }
-  in render m' (m.step.view m.scratch)
+  in render m' (m.step.view m.model)
 
 
 {-| The default way to render a wizard.
 -}
-defaultView : Bool -> ViewModel model -> Html msg -> Html (Msg msg)
+defaultView : Bool -> ViewModel model -> Html msg -> Html (WizardMsg msg)
 defaultView showDebug m body =
   let html =
         [ Html.p [ Attr.class "wizard-step"
@@ -130,17 +140,17 @@ defaultView showDebug m body =
                  , border
                  , spacing 1
                  ]
-            [App.map Msg body]
-        , Html.span [ spacing 1 ]
-            [ Html.span [spacing 0.2]
-                (List.repeat m.currentStep (Html.text "-") ++
-                   [Html.text "O"] ++
-                   List.repeat (m.numSteps - m.currentStep - 1) (Html.text "-"))
-            , Html.button [spacing 0.2, onClick Back] [Html.text "<<"]
+            [App.map StepMsg body]
+        , Html.span [ spacing 0.5 ]
+            [ Html.button [spacing 0.2, onClick Back] [Html.text "Back ⇐"]
+            , Html.span [spacing 0.2]
+                (List.repeat m.currentStep (Html.text "○") ++
+                   [Html.text "●"] ++
+                   List.repeat (m.numSteps - m.currentStep - 1) (Html.text "○"))
             , Html.button [ spacing 0.2
                           , onClick Forward
                           ]
-                [Html.text ">>"]
+                [Html.text "⇒ Next"]
             ]
         ]
       debug =
@@ -151,7 +161,7 @@ defaultView showDebug m body =
                  , border
                  , spacing 1
                  ]
-            [ Html.text ("MODEL: " ++ toString m.model) ]
+            [ Html.text ("DEBUG: " ++ toString m.model) ]
         ]
   in
   Html.div [ Attr.class "wizard"
