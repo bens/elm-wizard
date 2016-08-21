@@ -1,6 +1,7 @@
 module SampleWizard exposing (Msg, Model, WizardModel, init, restart, update, view)
 
 import Cons exposing (Cons)
+import Either exposing (..)
 import Html exposing (Html)
 import Html.App as App
 import Html.Attributes as Attr
@@ -11,7 +12,7 @@ import Wizard as W exposing (Step, Wizard)
 
 
 type alias Msg =
-  W.ServerMsg SError SMsg Model
+  W.Msg SMsg
 
 
 type alias WizardModel =
@@ -33,21 +34,21 @@ type Model
 
 
 type Validated a
-  = Ok a
+  = Good a
   | Bad a
 
 
 vvalue : Validated a -> a
 vvalue v =
   case v of
-    Ok x -> x
+    Good x -> x
     Bad x -> x
 
 
 vvalid : Validated a -> Bool
 vvalid v =
   case v of
-    Ok _ -> True
+    Good _ -> True
     Bad _ -> False
 
 
@@ -57,7 +58,7 @@ wizard =
 
 
 { init, update, view } =
-  wizard (Model (Ok "") (Ok 0))
+  wizard (Model (Good "") (Good 0))
 
 
 restart : Model -> WizardModel
@@ -69,11 +70,11 @@ stepA : Step SError SMsg Model
 stepA =
   let update msg (Model name x) =
         case msg of
-          W.Msg (Title name') ->
-            (Model (Ok name') x, Cmd.none)
-          W.Msg Incr ->
+          Right (Title name') ->
+            (Model (Good name') x, Cmd.none)
+          Right Incr ->
             (Model name x, Cmd.none)
-          W.InvalidModel errs ->
+          Left (W.InvalidModel errs) ->
             (Model (Bad (vvalue name)) x, Cmd.none)
       view (Model name x) =
         Html.div []
@@ -86,7 +87,7 @@ stepA =
             (if vvalid name then [] else [Html.text "●"])
           )
       check (Model name _) =
-        if String.isEmpty (vvalue name) then W.Failed [NoName] else W.Ok
+        if String.isEmpty (vvalue name) then Err [NoName] else Ok ()
   in { update = update, view = view, check = check }
 
 
@@ -94,11 +95,11 @@ stepB : Step SError SMsg Model
 stepB =
   let update msg (Model name x) =
         case msg of
-          W.Msg (Title _) ->
+          Right (Title _) ->
             (Model name x, Cmd.none)
-          W.Msg Incr ->
-            (Model name (Ok (vvalue x + 1)), Cmd.none)
-          W.InvalidModel errs ->
+          Right Incr ->
+            (Model name (Good (vvalue x + 1)), Cmd.none)
+          Left (W.InvalidModel errs) ->
             (Model name (Bad (vvalue x)), Cmd.none)
       view (Model name x) =
         Html.div []
@@ -112,11 +113,11 @@ stepB =
             ]
           )
       check (Model _ x) =
-        if vvalue x > 0 then W.Ok else W.Failed [Zero]
+        if vvalue x > 0 then Ok () else Err [Zero]
   in { update = update, view = view, check = check }
 
 
-viewWizard : Bool -> W.ViewModel model -> Html msg -> Html (W.Msg err msg)
+viewWizard : Bool -> W.ViewModel model -> Html msg -> Html (W.Msg msg)
 viewWizard showDebug m body =
   let empty = Html.text "○"
       full = Html.text "●"
